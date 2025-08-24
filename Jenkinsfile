@@ -25,9 +25,22 @@ pipeline {
                 script {
                     withAWS(credentials: 'aws-cli', region: "${REGION}") {
                         sh """
+                           echo ">>> Updating kubeconfig"
                            aws eks update-kubeconfig --region $REGION --name "$PROJECT-${params.deploy_to}"
                            kubectl get nodes
+                           
+                           echo ">>> Checking namespace $PROJECT"
+                           if kubectl get namespace $PROJECT >/dev/null 2>&1; then
+                               echo "Namespace $PROJECT already exists, patching metadata for Helm..."
+                               kubectl label namespace $PROJECT app.kubernetes.io/managed-by=Helm --overwrite
+                               kubectl annotate namespace $PROJECT meta.helm.sh/release-name=$COMPONENT --overwrite
+                               kubectl annotate namespace $PROJECT meta.helm.sh/release-namespace=$PROJECT --overwrite
+                           fi
+                           
+                           echo ">>> Preparing Helm values"
                            sed -i "s/IMAGE_VERSION/${params.appVersion}/g" values-${params.deploy_to}.yaml
+                           
+                           echo ">>> Deploying with Helm"
                            helm upgrade --install $COMPONENT -f values-${params.deploy_to}.yaml -n $PROJECT --create-namespace .
                         """
                     }
@@ -39,11 +52,13 @@ pipeline {
             steps {
                 script {
                     withAWS(credentials: 'aws-cli', region: "${REGION}") {
+                        echo ">>> Checking rollout status"
                         def deploymentStatus = sh(returnStdout: true, script: "kubectl rollout status deployment/${COMPONENT} --timeout=60s -n $PROJECT || echo FAILED").trim()
                         
                         if (deploymentStatus.contains("successfully rolled out")) {
                             echo "✅ Deployment is successful"
                         } else {
+                            echo "❌ Deployment failed. Rolling back..."
                             sh """
                                helm rollback $COMPONENT -n $PROJECT
                                sleep 20
@@ -51,9 +66,9 @@ pipeline {
                             def rollbackStatus = sh(returnStdout: true, script: "kubectl rollout status deployment/${COMPONENT} --timeout=60s -n $PROJECT || echo FAILED").trim()
                             
                             if (rollbackStatus.contains("successfully rolled out")) {
-                                error "❌ Deployment failed, but rollback was successful"
+                                error "Deployment failed, but rollback was successful"
                             } else {
-                                error "❌ Deployment failed and rollback also failed. Application is not running"
+                                error "Deployment failed and rollback also failed. Application is not running"
                             }
                         }
                     }
