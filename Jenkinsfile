@@ -35,11 +35,36 @@ pipeline {
                            sed -i "s/IMAGE_VERSION/${params.appVersion}/g" values-${params.deploy_to}.yaml
                            helm upgrade --install $COMPONENT -f values-${params.deploy_to}.yaml -n $PROJECT .
                         """
-                     }
+                    }
                 }
             }
-        }             
-   }
+        }
+        stage('Check Status'){
+            steps{
+                script{
+                    withAWS(credentials: 'aws-cli', region: 'us-east-1') {
+                        def deploymentStatus = sh(returnStdout: true, script: "kubectl rollout status deployment/catalogue --timeout=30s -n $PROJECT || echo FAILED").trim()
+                        if (deploymentStatus.contains("successfuly rooled out")) {
+                            echo "Deployemnt is success"
+                        } else {
+                           sh """
+                             helm rollback  $COMPONENT -n $PROJECT
+                              sleep 20
+                            """
+                            def rollbackStatus = sh(returnStdout: true, script: "kubectl rollout status deployment/catalogue --timeout=30s -n $PROJECT || echo FAILED").trim()
+                            if (deploymentStatus.contains("successfuly rolled out")) {
+                               error "Deployment is Failure,Rollback is success"
+                            }
+                           else{
+                             error "Deployment is Failure,Rollback is Failure,Application is not running"
+                           }
+                        }                
+                    }
+                }
+            }             
+        }
+    }
+
     post { 
         always { 
             echo 'I will always say Hello again!'
