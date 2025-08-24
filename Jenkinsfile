@@ -1,99 +1,115 @@
 pipeline {
-    agent { label 'AGENT-1' }
+    agent { label 'roboshop' }
 
     environment {
-        appVersion = ''
-        REGION = "us-east-1"
-        ACC_ID = "203981192510"
-        PROJECT = "roboshop"
+        PROJECT   = "roboshop"
         COMPONENT = "catalogue"
+        REGION    = "us-east-1"
+        APP_VERSION = "1.0.0"
     }
 
-    options { 
+    options {
         timeout(time: 30, unit: 'MINUTES')
-        disableConcurrentBuilds() 
-    }
-
-    parameters {
-        string(name: 'appVersion', description: 'image version of the application')
-        choice(name: 'deploy_to', choices: ['dev', 'qa', 'prod'], description: 'Pick the Environment')
     }
 
     stages {
-        stage('deploy') {
+
+        stage('Checkout') {
+            steps {
+                checkout([$class: 'GitSCM',
+                          branches: [[name: "*/main"]],
+                          userRemoteConfigs: [[url: "https://github.com/siri-123706/catalogue-cd.git",
+                                               credentialsId: "ssh-auth"]]
+                ])
+            }
+        }
+
+        stage('Deploy') {
             steps {
                 script {
                     withAWS(credentials: 'aws-cli', region: "${REGION}") {
-                        sh """
-                           echo ">>> Updating kubeconfig"
-                           aws eks update-kubeconfig --region $REGION --name "$PROJECT-${params.deploy_to}"
-                           kubectl get nodes
-                           
-                           echo ">>> Checking namespace $PROJECT"
-                           if kubectl get namespace $PROJECT >/dev/null 2>&1; then
-                               echo "Namespace $PROJECT already exists, patching metadata for Helm..."
-                               kubectl label namespace $PROJECT app.kubernetes.io/managed-by=Helm --overwrite
-                               kubectl annotate namespace $PROJECT meta.helm.sh/release-name=$COMPONENT --overwrite
-                               kubectl annotate namespace $PROJECT meta.helm.sh/release-namespace=$PROJECT --overwrite
-                           fi
-                           
-                           echo ">>> Preparing Helm values"
-                           sed -i "s/IMAGE_VERSION/${params.appVersion}/g" values-${params.deploy_to}.yaml
-                           
-                           echo ">>> Deploying with Helm"
-                           helm upgrade --install $COMPONENT -f values-${params.deploy_to}.yaml -n $PROJECT --create-namespace .
-                        """
+                        echo ">>> Updating kubeconfig"
+                        sh "aws eks update-kubeconfig --region ${REGION} --name roboshop-dev"
+
+                        echo ">>> Checking namespace ${PROJECT}"
+                        def nsExists = sh(returnStatus: true, script: "kubectl get namespace ${PROJECT}") == 0
+                        if (nsExists) {
+                            echo "Namespace ${PROJECT} already exists, patching metadata for Helm..."
+                            sh "kubectl label namespace ${PROJECT} app.kubernetes.io/managed-by=Helm --overwrite || true"
+                            sh "kubectl annotate namespace ${PROJECT} meta.helm.sh/release-name=${COMPONENT} --overwrite || true"
+                            sh "kubectl annotate namespace ${PROJECT} meta.helm.sh/release-namespace=${PROJECT} --overwrite || true"
+                        }
+
+                        echo ">>> Preparing Helm values"
+                        sh "sed -i s/IMAGE_VERSION/${APP_VERSION}/g values-dev.yaml"
+
+                        echo ">>> Deploying with Helm"
+                        sh "helm upgrade --install ${COMPONENT} -f values-dev.yaml -n ${PROJECT} --create-namespace ."
                     }
                 }
             }
         }
 
         stage('Check Status') {
-    steps {
-        script {
-            withAWS(credentials: 'aws-cli', region: "${REGION}") {
-                echo ">>> Checking rollout status"
-                def deploymentStatus = sh(returnStdout: true, script: "kubectl rollout status deployment/${COMPONENT} --timeout=60s -n $PROJECT || echo FAILED").trim()
+            steps {
+                script {
+                    withAWS(credentials: 'aws-cli', region: "${REGION}") {
+                        echo ">>> Checking rollout status"
+                        def deploymentStatus = sh(returnStdout: true, script: "kubectl rollout status deployment/${COMPONENT} --timeout=60s -n ${PROJECT} || echo FAILED").trim()
 
-                if (deploymentStatus.contains("successfully rolled out")) {
-                    echo "✅ Deployment is successful"
-                } else {
-                    echo "❌ Deployment failed. Checking if rollback is possible..."
-                    
-                    def revision = sh(returnStdout: true, script: "helm history $COMPONENT -n $PROJECT --max=2 | awk 'NR==2{print \$1}' || echo NONE").trim()
-                    
-                    if (revision != "NONE" && revision != "1") {
-                        sh """
-                           helm rollback $COMPONENT -n $PROJECT
-                           sleep 20
-                        """
-                        def rollbackStatus = sh(returnStdout: true, script: "kubectl rollout status deployment/${COMPONENT} --timeout=60s -n $PROJECT || echo FAILED").trim()
-                        if (rollbackStatus.contains("successfully rolled out")) {
-                            error "Deployment failed, rollback successful"
+                        if (deploymentStatus.contains("successfully rolled out")) {
+                            echo "✅ Deployment is successful"
                         } else {
-                            error "Deployment failed and rollback also failed"
+                            echo "❌ Deployment failed. Collecting debug info..."
+
+                            // Print pod status
+                            sh "kubectl get pods -n ${PROJECT} -o wide"
+
+                            // Print describe + logs for each pod
+                            sh """
+                               for pod in \$(kubectl get pods -n ${PROJECT} -l app=${COMPONENT} -o jsonpath='{.items[*].metadata.name}'); do
+                                   echo ">>> Describing pod: \$pod"
+                                   kubectl describe pod \$pod -n ${PROJECT} || true
+                                   echo ">>> Logs for pod: \$pod"
+                                   kubectl logs \$pod -n ${PROJECT} --tail=50 || true
+                               done
+                            """
+
+                            // Check rollback possibility
+                            def revision = sh(returnStdout: true, script: "helm history ${COMPONENT} -n ${PROJECT} --max=2 | awk 'NR==2{print \$1}' || echo NONE").trim()
+
+                            if (revision != "NONE" && revision != "1") {
+                                echo ">>> Rolling back to previous revision"
+                                sh """
+                                   helm rollback ${COMPONENT} -n ${PROJECT}
+                                   sleep 20
+                                """
+                                def rollbackStatus = sh(returnStdout: true, script: "kubectl rollout status deployment/${COMPONENT} --timeout=60s -n ${PROJECT} || echo FAILED").trim()
+                                if (rollbackStatus.contains("successfully rolled out")) {
+                                    error "Deployment failed, rollback successful"
+                                } else {
+                                    error "Deployment failed and rollback also failed"
+                                }
+                            } else {
+                                error "Deployment failed, but no previous release to rollback to"
+                            }
                         }
-                    } else {
-                        error "Deployment failed, but no previous release to rollback to"
                     }
                 }
             }
         }
     }
-}
-
-    }
 
     post {
         always {
-            echo 'Cleaning workspace...'
+            echo "Cleaning workspace..."
             deleteDir()
         }
-        success {
-            echo '✅ Pipeline finished successfully'
-        }
         failure {
-            echo '❌ Pipeline failed'
+            echo "❌ Pipeline failed"
+        }
+        success {
+            echo "✅ Pipeline succeeded"
         }
     }
 }
