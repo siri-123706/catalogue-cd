@@ -49,32 +49,39 @@ pipeline {
         }
 
         stage('Check Status') {
-            steps {
-                script {
-                    withAWS(credentials: 'aws-cli', region: "${REGION}") {
-                        echo ">>> Checking rollout status"
-                        def deploymentStatus = sh(returnStdout: true, script: "kubectl rollout status deployment/${COMPONENT} --timeout=60s -n $PROJECT || echo FAILED").trim()
-                        
-                        if (deploymentStatus.contains("successfully rolled out")) {
-                            echo "✅ Deployment is successful"
+    steps {
+        script {
+            withAWS(credentials: 'aws-cli', region: "${REGION}") {
+                echo ">>> Checking rollout status"
+                def deploymentStatus = sh(returnStdout: true, script: "kubectl rollout status deployment/${COMPONENT} --timeout=60s -n $PROJECT || echo FAILED").trim()
+
+                if (deploymentStatus.contains("successfully rolled out")) {
+                    echo "✅ Deployment is successful"
+                } else {
+                    echo "❌ Deployment failed. Checking if rollback is possible..."
+                    
+                    def revision = sh(returnStdout: true, script: "helm history $COMPONENT -n $PROJECT --max=2 | awk 'NR==2{print \$1}' || echo NONE").trim()
+                    
+                    if (revision != "NONE" && revision != "1") {
+                        sh """
+                           helm rollback $COMPONENT -n $PROJECT
+                           sleep 20
+                        """
+                        def rollbackStatus = sh(returnStdout: true, script: "kubectl rollout status deployment/${COMPONENT} --timeout=60s -n $PROJECT || echo FAILED").trim()
+                        if (rollbackStatus.contains("successfully rolled out")) {
+                            error "Deployment failed, rollback successful"
                         } else {
-                            echo "❌ Deployment failed. Rolling back..."
-                            sh """
-                               helm rollback $COMPONENT -n $PROJECT
-                               sleep 20
-                            """
-                            def rollbackStatus = sh(returnStdout: true, script: "kubectl rollout status deployment/${COMPONENT} --timeout=60s -n $PROJECT || echo FAILED").trim()
-                            
-                            if (rollbackStatus.contains("successfully rolled out")) {
-                                error "Deployment failed, but rollback was successful"
-                            } else {
-                                error "Deployment failed and rollback also failed. Application is not running"
-                            }
+                            error "Deployment failed and rollback also failed"
                         }
+                    } else {
+                        error "Deployment failed, but no previous release to rollback to"
                     }
                 }
             }
         }
+    }
+}
+
     }
 
     post {
