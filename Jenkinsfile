@@ -47,19 +47,19 @@ pipeline {
                         if (deploymentStatus.contains("successfully rolled out")) {
                             echo "Deployment is success"
                         } 
-                        // else {
-                        //    sh """
-                        //        helm rollback  $COMPONENT -n $PROJECT
-                        //        sleep 20
-                        //     """
-                        //     def rollbackStatus = sh(returnStdout: true, script: "kubectl rollout status deployment/catalogue --timeout=180s -n $PROJECT || echo FAILED").trim()
-                        //     if (rollbackStatus.contains("successfuly rolled out")) {
-                        //        error "Deployment is Failure,Rollback is Success"
-                        //     }
-                        //     else{
-                        //        error "Deployment is Failure,Rollback is Failure,Application is not running"
-                        //     }
-                        // }                
+                        else {
+                           sh """
+                               helm rollback  $COMPONENT -n $PROJECT
+                               sleep 20
+                            """
+                            def rollbackStatus = sh(returnStdout: true, script: "kubectl rollout status deployment/catalogue --timeout=180s -n $PROJECT || echo FAILED").trim()
+                            if (rollbackStatus.contains("successfuly rolled out")) {
+                               error "Deployment is Failure,Rollback is Success"
+                            }
+                            else{
+                               error "Deployment is Failure,Rollback is Failure,Application is not running"
+                            }
+                        }                
                     }
                 }
             }             
