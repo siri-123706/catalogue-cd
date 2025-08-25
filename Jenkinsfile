@@ -55,8 +55,8 @@ pipeline {
                             if (rollbackStatus.contains("successfuly rolled out")) {
                                error "Deployment is Failure,Rollback is Success"
                             }
-                           else{
-                             error "Deployment is Failure,Rollback is Failure,Application is not running"
+                            else{
+                               error "Deployment is Failure,Rollback is Failure,Application is not running"
                             }
                         }                
                     }
