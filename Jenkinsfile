@@ -2,10 +2,11 @@ pipeline {
     agent { label 'roboshop' }
 
     environment {
-        PROJECT   = "roboshop"
-        COMPONENT = "catalogue"
-        REGION    = "us-east-1"
-        APP_VERSION = "1.0.0"
+        PROJECT      = "roboshop"
+        COMPONENT    = "catalogue"
+        REGION       = "us-east-1"
+        CLUSTER_NAME = "roboshop-dev"
+        APP_VERSION  = ''   // left blank, can be set dynamically later
     }
 
     options {
@@ -24,12 +25,24 @@ pipeline {
             }
         }
 
+        stage('Set Version') {
+            steps {
+                script {
+                    // Set APP_VERSION dynamically here
+                    // Example: use git commit hash
+                    env.APP_VERSION = sh(returnStdout: true, script: "git rev-parse --short HEAD").trim()
+
+                    echo ">>> Using APP_VERSION=${env.APP_VERSION}"
+                }
+            }
+        }
+
         stage('Deploy') {
             steps {
                 script {
                     withAWS(credentials: 'aws-cli', region: "${REGION}") {
                         echo ">>> Updating kubeconfig"
-                        sh "aws eks update-kubeconfig --region ${REGION} --name roboshop-dev"
+                        sh "aws eks update-kubeconfig --region ${REGION} --name ${CLUSTER_NAME}"
 
                         echo ">>> Checking namespace ${PROJECT}"
                         def nsExists = sh(returnStatus: true, script: "kubectl get namespace ${PROJECT}") == 0
@@ -61,11 +74,8 @@ pipeline {
                             echo "✅ Deployment is successful"
                         } else {
                             echo "❌ Deployment failed. Collecting debug info..."
+                            sh "kubectl get pods -n ${PROJECT} -o wide || true"
 
-                            // Print pod status
-                            sh "kubectl get pods -n ${PROJECT} -o wide"
-
-                            // Print describe + logs for each pod
                             sh """
                                for pod in \$(kubectl get pods -n ${PROJECT} -l app=${COMPONENT} -o jsonpath='{.items[*].metadata.name}'); do
                                    echo ">>> Describing pod: \$pod"
@@ -75,7 +85,6 @@ pipeline {
                                done
                             """
 
-                            // Check rollback possibility
                             def revision = sh(returnStdout: true, script: "helm history ${COMPONENT} -n ${PROJECT} --max=2 | awk 'NR==2{print \$1}' || echo NONE").trim()
 
                             if (revision != "NONE" && revision != "1") {
@@ -85,6 +94,7 @@ pipeline {
                                    sleep 20
                                 """
                                 def rollbackStatus = sh(returnStdout: true, script: "kubectl rollout status deployment/${COMPONENT} --timeout=60s -n ${PROJECT} || echo FAILED").trim()
+
                                 if (rollbackStatus.contains("successfully rolled out")) {
                                     error "Deployment failed, rollback successful"
                                 } else {
@@ -113,6 +123,7 @@ pipeline {
         }
     }
 }
+
 
 
 
