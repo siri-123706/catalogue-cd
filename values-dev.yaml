@@ -1,5 +1,5 @@
 deployment:
- imageURL: shirisha104/catalogue
+ imageURL: joindevops/catalogue
  imageVersion: IMAGE_VERSION
 hpa:
  maxReplicas: 10
