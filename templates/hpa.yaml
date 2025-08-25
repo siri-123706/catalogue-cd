@@ -9,7 +9,7 @@ spec:
     kind: Deployment
     name: catalogue 
   minReplicas: 1
-  maxReplicas: {{ .Values.maxReplicas }}
+  maxReplicas: {{ .Values.hpa.maxReplicas }}
   metrics:
   - type: Resource
     resource:
