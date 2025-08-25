@@ -44,7 +44,7 @@ pipeline {
                 script{
                     withAWS(credentials: 'aws-cli', region: 'us-east-1') {
                         def deploymentStatus = sh(returnStdout: true, script: "kubectl rollout status deployment/catalogue --timeout=30s -n $PROJECT || echo FAILED").trim()
-                        if (deploymentStatus.contains("successfuly rolled out")) {
+                        if (deploymentStatus.contains("successfully rolled out")) {
                             echo "Deployment is success"
                         } else {
                            sh """
@@ -52,11 +52,11 @@ pipeline {
                                sleep 20
                             """
                             def rollbackStatus = sh(returnStdout: true, script: "kubectl rollout status deployment/catalogue --timeout=30s -n $PROJECT || echo FAILED").trim()
-                            if (rollbackStatus.contains("successfuly rolled out")) {
-                               error "Deployment is Failure,Rollback is Success"
+                            if (rollbackStatus.contains("successfully rolled out")) {
+                               error "Deployment is Failure, Rollback Success"
                             }
                            else{
-                             error "Deployment is Failure,Rollback is Failure,Application is not running"
+                             error "Deployment is Failure, Rollback Failure. Application is not running"
                             }
                         }                
                     }
