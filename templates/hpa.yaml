@@ -10,7 +10,7 @@ spec:
     name: catalogue 
   minReplicas: 1
   maxReplicas: {{ .Values.hpa.maxReplicas }}
-  metrics:
+  metrics: 
   - type: Resource
     resource:
       name: cpu

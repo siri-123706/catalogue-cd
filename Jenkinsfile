@@ -48,7 +48,7 @@ pipeline {
                             echo "Deployment is success"
                         } 
                         else {
-                           sh """
+                           sh """ 
                                helm rollback  $COMPONENT -n $PROJECT
                                sleep 20
                             """
