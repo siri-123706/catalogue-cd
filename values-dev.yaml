@@ -1,5 +1,5 @@
 deployment:
- imageURL: shirisha104/catalogue
+ imageURL: 203981192510.dkr.ecr.us-east-1.amazonaws.com/roboshop
  imageVersion: IMAGE_VERSION
 hpa:
  maxReplicas: 10
